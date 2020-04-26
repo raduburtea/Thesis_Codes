@@ -1,18 +1,8 @@
 import gym
-# import torch
-# import torch.nn as nn
-# import torch.nn.functional as F
-# from torch.autograd import Variable
 import numpy as np
 import os
 import matplotlib.pyplot as plt
 import tensorflow as tf
-# from keras.applications.mobilenet import MobileNet
-
-# from rl.agents.dqn import DQNAgent
-# from rl.policy import EpsGreedyQPolicy
-# from rl.memory import SequentialMemory
-# from keras.applications import VGG16
 import scipy.misc as smp
 # os.environ["KERAS_BACKEND"] = "plaidml.keras.backend"
 
@@ -45,43 +35,7 @@ import gym
 from gym import wrappers
 env = gym.make('CarRacing-v1')
 print("Num GPUs Available: ", len(tf.config.experimental.list_physical_devices('GPU')))
-# from keras.callbacks import ModelCheckpoint
-# from keras.models import Model, load_model, save_model, Sequential
-# from keras.layers import Dense, Activation, Dropout, Input, Masking, TimeDistributed, LSTM, Conv1D
-# from keras.layers import GRU, Bidirectional, BatchNormalization, Reshape
-# from keras.optimizers import Adam
-# from keras.backend.tensorflow_backend import set_session
 import tensorflow as tf
-# config = tf.compat.v1.ConfigProto()
-# gpu_options = tf.compat.v1.GPUOptions(allow_growth=True) 
-# session_config = tf.compat.v1.ConfigProto(allow_soft_placement=True, log_device_placement=False, gpu_options=gpu_options)
-# import tensorflow as tf
-# with tf.device('/gpu:1'):
-#     config = tf.ConfigProto(intra_op_parallelism_threads=4,\
-#            inter_op_parallelism_threads=4, allow_soft_placement=True,\
-#            device_count = {'CPU' : 1, 'GPU' : 1})
-#     session = tf.Session(config=config)
-#     K.set_session(session)
-#Used for feature extraction in order to understand whether the states are the same
-# gpus = tf.config.experimental.list_physical_devices('GPU')
-# if gpus:
-#     try:
-#         # Restrict TensorFlow to only use the fourth GPU
-#         tf.config.experimental.set_visible_devices(gpus[0], 'GPU')
-
-#         # Currently, memory growth needs to be the same across GPUs
-#         for gpu in gpus:
-#             tf.config.experimental.set_memory_growth(gpu, True)
-#         logical_gpus = tf.config.experimental.list_logical_devices('GPU')
-#         print(len(gpus), "Physical GPUs,", len(logical_gpus), "Logical GPUs")
-#     except RuntimeError as e:
-#         # Memory growth must be set before GPUs have been initialized
-#         print(e)
-# physical_devices = tf.compat.v1.config.experimental.list_physical_devices('GPU')
-# print("physical_devices-------------", len(physical_devices))
-# tf.compat.v1.config.experimental.set_memory_growth(physical_devices[0], True)
-# gpu_options = tf.compat.v1.GPUOptions(per_process_gpu_memory_fraction=0.7)
-
 
 
 # from keras.backend.tensorflow_backend import set_session
@@ -97,14 +51,8 @@ def create_cnn_vectorization():
     model = Sequential()
     model.add(Conv2D(filters = 16, kernel_size = 8, strides = (3,3), input_shape=( 84, 84, 4)))
     model.add(Activation('relu'))
-    # model.add(Dropout(0.2))
-    # model.add(BatchNormalization())
-    # model.add(MaxPooling2D(pool_size = (2, 2)))
     model.add(Conv2D(filters = 32, kernel_size = 4,  input_shape=( 84, 84, 4)))
     model.add(Activation('relu'))
-    # model.add(BatchNormalization())
-    # model.add(MaxPooling2D(pool_size = (2, 2)))
-    # model.add(Dropout(0.2))
     model.add(Flatten())
     model.add(Dense(256))  # 7x7+3 or 14x14+3
     model.add(Activation('relu'))
@@ -171,8 +119,6 @@ class Model:
 
 def rgb2gray(rgb):
     i = rgb[:84, 5:89, :]
-    # image = np.round(np.dot(rgb[...,:3], [0.2989, 0.5870, 0.1140]))
-    # return image.reshape((84, 84))
     i = tf.image.rgb_to_grayscale(i)
     i = tf.reshape(i, [84, 84])
     return i
@@ -211,19 +157,6 @@ class ImageMemory:
 
 
 #due to the high dimensionality of the action space I have decided to make it discrete in order to implement a q-learning algorithm
-actions_dict = {'left':[-0.6,0.5,0], 'right':[0.6,0.5,0], 'brake':[0,0,0], 'acc':[0,0.5,0]}
-
-actions = ['left', 'right', 'brake', 'acc']
-
-# def return_all_max(actions):
-#     listOfKeys = list()
-#     itemMaxValue = max([(value, key) for key, value in actions.items()])[0]
-#     # Iterate over all the items in dictionary to find keys with max value
-#     for key, value in actions.items():
-#         if value == itemMaxValue:
-#             listOfKeys.append(key)
-#     # print(np.random.choice(listOfKeys, 1)[0])
-#     return np.random.choice(listOfKeys, 1)[0]
 
 
 def action_epsilon_greedy(state, epsilon):
@@ -257,15 +190,8 @@ def play(agent, actions, actions_dict, epsilon):
         state_intermed = rgb2gray(observation)
         images.add_image(state_intermed)
         state = images.get_stacked_images().reshape(-1, 84, 84, 4)
-        # state = state_intermed.reshape(-1, 84, 84, 1)
-        action = agent.act(state, epsilon)
 
-        # argmax_qval, qval, flag = action_epsilon_greedy(state, epsilon)
-        # print('value is ', qval)
-        # last_state = state
-        # action = action_creation(argmax_qval, actions, actions_dict, flag)
-        # print('actions is ', action)
-        # print('The action is:', action)
+        action = agent.act(state, epsilon)
         observation, reward, done, info = env.step(actions[action])
         new_state_intermed = rgb2gray(observation)
         images.add_image(new_state_intermed)
@@ -279,13 +205,7 @@ def play(agent, actions, actions_dict, epsilon):
         # print('qval is ', qval_prime)
         # state2.show_class()
         state = new_state
-        # Q = reward+0.99*(np.max(qval_prime))
-        # y = qval[:]
-        # # print('y', y)
-        # # print('haaatz', argmax_qval)
-        # y[argmax_qval] = Q
-        # model.update(last_state, y.reshape(1,-1))
-        # # print('Prime', action_prime)
+
 
         totalreward+=reward
         iter+=1
@@ -320,47 +240,6 @@ for n in range(1,N):
 # We save the model every 10 episodes:
     if n%10 == 0:
         agent.model.save('race-car_larger2.h5')
-    # try:
-    #     if n%50 ==0:
-            
-    # except:
-    #         pass            
+ 
 env.close()
 plot_running_avg(totalrewards)
-
-# observation = env.reset()
-# state = observation
-# img = rgb2gray
-# for i in range(100):
-
-
-
-# observation = env.reset()
-# print(observation)
-# for i in range(200):
-    
-#     env.render()
-#     action = env.action_space.sample()
-#     print(action)
-#     observation, reward, done, info = env.step(action)
-#     # graying(observation)
-
-# env.close()
-
-# actions = [ [-0.8,1,0], [0.8,1,0], [0.0,0.4,0], [0,0,0], [-0.8,0.5,0], [0.8,0.5,0], [-0.8,0.3,0], [0.8,0.3,0], [0.4,0.4,0], [-0.4,0.4,0]]
-
-# observation = env.reset()
-
-# for i in range(1000):
-#     # observation = env.reset()
-#     env.render()
-#     action_s = np.random.choice([0,1,2,3], 1)[0]
-#     action = actions[action_s]
-#     print(action)
-#     observation, reward, done, info = env.step(action)
-#     # graying(observation)
-
-# #tests
-# mine = state_action([1,2,3,4])
-# mine2 = state_action([1,2,3,4])
-# check_if_in(states, mine2.state)
