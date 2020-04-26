@@ -9,9 +9,6 @@ import matplotlib.pyplot as plt
 import tensorflow as tf
 from keras.applications.mobilenet import MobileNet
 
-# from rl.agents.dqn import DQNAgent
-# from rl.policy import EpsGreedyQPolicy
-# from rl.memory import SequentialMemory
 from keras.applications import VGG16
 import scipy.misc as smp
 os.environ["KERAS_BACKEND"] = "plaidml.keras.backend"
@@ -82,22 +79,6 @@ def check_state(out, out2):
     else:
         return False
 
-# if np.sum(out2 == out) == len(out[0]):
-#     print('Smash')
-
-# class States:
-#     def __init__(self):
-#         states = []
-#
-#     def add_state(self, state):
-#         self.states.append(state)
-#
-#     def check_if_in(self, state_new):
-#         for state in self.states:
-#             if not check_state(state, state_new):
-#                 return False
-#         return True
-
 
 def plot_running_avg(total_rewards):
     N = len(total_rewards)
@@ -110,10 +91,6 @@ def plot_running_avg(total_rewards):
     plt.ylabel("Reward")
     plt.show()
 
-
-
-
-#due to the high dimensionality of the action space I have decided to make it discrete in order to implement a q-learning algorithm
 
 
 brake = [0,0,0.8]
@@ -255,19 +232,6 @@ env.close()
 
 
 
-
-# observation = env.reset()
-# print(observation)
-# for i in range(200):
-#     # observation = env.reset()
-#     env.render()
-#     action = [-1,0.4,0]
-#     observation, reward, done, info = env.step(action)
-#     # graying(observation)
-
 env.close()
-#
-# #tests
-# mine = state_action([1,2,3,4])
-# mine2 = state_action([1,2,3,4])
-# check_if_in(states, mine2.state)
+
+
