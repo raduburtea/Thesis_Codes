@@ -1,8 +1,18 @@
 import gym
+# import torch
+# import torch.nn as nn
+# import torch.nn.functional as F
+# from torch.autograd import Variable
 import numpy as np
 import os
 import matplotlib.pyplot as plt
 import tensorflow as tf
+# from keras.applications.mobilenet import MobileNet
+
+# from rl.agents.dqn import DQNAgent
+# from rl.policy import EpsGreedyQPolicy
+# from rl.memory import SequentialMemory
+# from keras.applications import VGG16
 import scipy.misc as smp
 # os.environ["KERAS_BACKEND"] = "plaidml.keras.backend"
 
@@ -12,7 +22,7 @@ from gym.envs.registration import registry, register, make, spec
 register(
     id='CarRacing-v1', # CHANGED
     entry_point='gym.envs.box2d:CarRacing',
-    max_episode_steps=1200, # CHANGED
+    max_episode_steps=1500, # CHANGED
     reward_threshold=900,
 )
 
@@ -38,27 +48,29 @@ print("Num GPUs Available: ", len(tf.config.experimental.list_physical_devices('
 import tensorflow as tf
 
 
-# from keras.backend.tensorflow_backend import set_session
-config = tf.compat.v1.ConfigProto()
-config.gpu_options.allow_growth = True  # dynamically grow the memory used on the GPU
-config.log_device_placement = True  # to log device placement (on which device the operation ran)
-                                    # (nothing gets printed in Jupyter, only if you run it standalone)
-sess = tf.compat.v1.Session(config=config)
-tf.compat.v1.keras.backend.set_session(sess)
-
 
 def create_cnn_vectorization():
+    # if os.path.exists('race-car_larger2.h5'):
+    #     print("Model is loaded")
+    #     return load_model('race-car_larger2.h5')
+
     model = Sequential()
-    model.add(Conv2D(filters = 16, kernel_size = 8, strides = (3,3), input_shape=( 84, 84, 4)))
+
+    model.add(Conv2D(filters = 16, kernel_size = 8, strides = (4,4), input_shape=( 84, 84, 4)))
     model.add(Activation('relu'))
     model.add(Conv2D(filters = 32, kernel_size = 4,  input_shape=( 84, 84, 4)))
     model.add(Activation('relu'))
     model.add(Flatten())
-    model.add(Dense(256))  # 7x7+3 or 14x14+3
-    model.add(Activation('relu'))
+
     
-    model.add(Dense(15))
-    model.add(Activation('relu'))  # linear output so we can have a range of real-valued opts.
+    model.add(Dense(256, init='lecun_uniform'))
+    model.add(Activation('relu'))
+
+    model.add(Dense(128, init='lecun_uniform'))
+    model.add(Activation('relu'))
+
+    model.add(Dense(11, init = 'lecun_uniform'))
+    model.add(Activation('linear'))
     
     model.compile(loss='mse', optimizer=Adamax(lr=0.001))  # lr=0.001
     
@@ -67,23 +79,22 @@ def create_cnn_vectorization():
 
 
 class Model:
-    def __init__(self, env, actions, actions_dict, gamma):
+    def __init__(self, env, gamma):
         self.env = env
         self.model = create_cnn_vectorization() #tracks the actual prediction
         self.target_model = create_cnn_vectorization() #tracks the action we want the agent to take
         self.memory = deque(maxlen=2000)
-        self.actions = actions
-        self.actions_dict = actions_dict
+
         self.gamma = gamma
         
     def predict(self, s):
-        return self.model.predict(s)[0]
+        return self.model.predict(s, verbose=0)[0]
 
     def update(self, s, Q):
         self.model.fit(s, Q, verbose = 0)
 
-    def remember(self, state, action, reward, new_state, done):
-        self.memory.append([state, action, reward, new_state, done])
+    def remember(self, state, action, arg, reward, new_state, done):
+        self.memory.append([state, action, arg, reward, new_state, done])
 
     def replay(self):
         batch_size = 8
@@ -92,36 +103,35 @@ class Model:
 
         samples = random.sample(self.memory, batch_size)
         for sample in samples:
-            state, action, reward, new_state, done = sample
-            target = self.target_model.predict(state)
+            state, action, arg, reward, new_state, done = sample
+            target = self.target_model.predict(state, verbose=0)
             
             if done:
-                target[0][action] = reward
+                target[0][arg] = reward
             else:
                 Q_future = max(
-                    self.target_model.predict(new_state)[0])
-                target[0][action] = reward + Q_future * self.gamma
+                    self.target_model.predict(new_state, verbose=0)[0])
+                target[0][arg] = reward + Q_future * self.gamma
             self.model.fit(state, target, epochs=1, verbose=0)
 
     def act(self, state, epsilon):
         if np.random.random() < epsilon:
-            return np.random.choice([i for i in range(len(actions))], 1)[0]
-        return np.argmax(self.model.predict(state)[0])
+            return convert_argmax_qval_to_env_action(np.random.choice([i for i in range(11)], 1)[0]), np.random.choice([i for i in range(11)], 1)[0]
+        return convert_argmax_qval_to_env_action(np.argmax(self.model.predict(state, verbose=0)[0])), np.argmax(self.model.predict(state, verbose=0)[0]) 
 
     def target_train(self):
         weights = self.model.get_weights()
         target_weights = self.target_model.get_weights()
         for i in range(len(target_weights)):
-            target_weights[i] = weights[i]
+            target_weights[i] = target_weights[i]*0.3 + 0.7*weights[i]
         self.target_model.set_weights(target_weights)
 
 
 
 def rgb2gray(rgb):
     i = rgb[:84, 5:89, :]
-    i = tf.image.rgb_to_grayscale(i)
-    i = tf.reshape(i, [84, 84])
-    return i
+    i = 2 * color.rgb2gray(i) - 1
+    return i.reshape((84, 84))
 
 def plot_running_avg(total_rewards):
     N = len(total_rewards)
@@ -140,9 +150,7 @@ class ImageMemory:
         self.images = [np.zeros((84,84)) for i in range(4)]
 
     def add_image(self, image):
-        # if len(self.images) <2:
-        #     self.images.append(image)
-        # else:
+
             self.images.pop(0)
             self.images.append(image)
 
@@ -154,30 +162,31 @@ class ImageMemory:
         print(self.images)
 
 
-
-
-#due to the high dimensionality of the action space I have decided to make it discrete in order to implement a q-learning algorithm
-
-
-def action_epsilon_greedy(state, epsilon):
-    flag = 'random'
-    qval = model.predict(state)
-    # print('qval is', qval)
-    if np.random.random() > epsilon:
-        # print(state)
-        flag='not'
-        return self.actions[np.argmax(qval)]
+def convert_argmax_qval_to_env_action(output_value):
+    # We reduce the action space to 
+    
+    gas = 0.0
+    brake = 0.0
+    steering = 0.0
+    
+    # Output value ranges from 0 to 10:
+    
+    if output_value <= 8:
+        # Steering, brake, and gas are zero
+        output_value -= 4
+        steering = float(output_value)/4
+    elif output_value >=9 and output_value <=9:
+        output_value -= 8
+        gas = float(output_value)/3  # 33% of gas
+    elif output_value >= 10 and output_value <= 10:
+        output_value -= 9
+        brake = float(output_value)/2  # 50% of brake
     else:
-        return np.random.choice([0,1,2,3], 1)[0]
+        print("Error")  #Why?
+    
+    return [steering, gas, brake]
 
-def action_creation(output, actions, actions_dict, flag):
-    # if flag == 'random':
-        return actions_dict[actions[output]]
-
-
-env.action_space.sample()
-
-def play(agent, actions, actions_dict, epsilon):
+def play(agent,  epsilon):
     print(epsilon)
     observation = env.reset()
     totalreward = 0
@@ -187,59 +196,65 @@ def play(agent, actions, actions_dict, epsilon):
     images = ImageMemory()
     while not done:
         env.render()
+        
         state_intermed = rgb2gray(observation)
         images.add_image(state_intermed)
         state = images.get_stacked_images().reshape(-1, 84, 84, 4)
 
-        action = agent.act(state, epsilon)
-        observation, reward, done, info = env.step(actions[action])
+
+        action, argmax = agent.act(state, epsilon)
+
+        observation, reward, done, info = env.step(action)
         new_state_intermed = rgb2gray(observation)
+        
         images.add_image(new_state_intermed)
         
         new_state = images.get_stacked_images().reshape(-1, 84, 84, 4)
         # new_state = new_state_intermed.reshape(-1, 84, 84, 1)
-        agent.remember(state, action, reward, new_state, done)
+        agent.remember(state, action, argmax, reward, new_state, done)
 
         agent.replay()
         agent.target_train()
         # print('qval is ', qval_prime)
         # state2.show_class()
         state = new_state
-
-
+        # Q = reward+0.99*(np.max(qval_prime))
+    
         totalreward+=reward
         iter+=1
 
     return totalreward, iter
-
-actions = [[-0.4,0.3,0], [0.4,0.3,0], [0.0,0.3,0],  [0,0.2,0],  [0,0,0], [-0.1,0.1,0], [0.1,0.1,0],  [-0.2,0.2,0], [0.2,0.2,0], [-0.6,0.4,0.1], [0.6,0.4,0.1], [-0.8,0.3,0.1], [0.8,0.3,0.1] , [-0.4,0.2,0], [0.4,0.2,0]]
-
 # with tf.compat.v1.Session(config=tf.compat.v1.ConfigProto(gpu_options=gpu_options)) as sess:
-N=300
+N=400
 totalrewards = np.empty(N)
 costs = np.empty(N)
-agent = Model(env, actions, actions_dict, 0.85)
+agent = Model(env,  0.99)
 # actions = ['left', 'right', 'brake', 'acc',]
+eps = 1
 env = wrappers.Monitor(env, os.path.join(os.getcwd(), "videos"), force=True)
 for n in range(1,N):
-    if n <= 1:
-        eps = 1
-    elif eps <= 0.15:
-        eps = 0.15
+    if n <= 10:
+        eps -= 0.05
     else:
-        eps = 1 / np.sqrt(n)
-    totalreward, iters = play(agent, actions, actions_dict, eps)
+        eps = 1/np.sqrt(n)
+    if eps <= 0.05:
+        eps = 0.05
+    totalreward, iters = play(agent,  eps)
 
     totalrewards[n] = totalreward
     print("Episode: ", n,
           ", iters: ", iters,
           ", total reward: ", totalreward,
           ", epsilon: ", eps,
-          ", average reward (of last 100): ", totalrewards[max(0,n-100):(n+1)].mean()
+          ", average reward (of last 100): ", totalrewards[max(0,n-99):(n)].mean()
          )
 # We save the model every 10 episodes:
-    if n%10 == 0:
+    if n%50 == 0:
         agent.model.save('race-car_larger2.h5')
- 
+    if n % 50 == 0:
+        with open('Rew.txt', 'w') as filehandle:
+            for listitem in totalrewards:
+                filehandle.write('%s\n' % listitem)
 env.close()
 plot_running_avg(totalrewards)
+
