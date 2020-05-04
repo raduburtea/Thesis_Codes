@@ -1,11 +1,14 @@
 import gym
-
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from torch.autograd import Variable
 import numpy as np
 import os
 import matplotlib.pyplot as plt
 import tensorflow as tf
 from keras.applications.mobilenet import MobileNet
-
+import copy
 # from rl.agents.dqn import DQNAgent
 # from rl.policy import EpsGreedyQPolicy
 # from rl.memory import SequentialMemory
@@ -26,7 +29,7 @@ register(
 # import tensorflow.contrib.slim as slim
 
 import os
-
+os.environ['KMP_DUPLICATE_LIB_OK']='True'
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
@@ -52,12 +55,39 @@ def create_cnn_vectorization():
     model.add(Dense(512, input_shape=(10*10 + 7 + 4,)))
     model.add(Activation('relu'))
 
-    model.add(Dense(4, init = 'lecun_uniform'))
+    model.add(Dense(256, init='lecun_uniform'))
     model.add(Activation('relu'))
+
+    model.add(Dense(11, init = 'lecun_uniform'))
+    model.add(Activation('linear'))
     
     model.compile(loss='mse', optimizer='sgd')
 
     return model
+
+def convert_argmax_qval_to_env_action(output_value):
+    # We reduce the action space to 
+    
+    gas = 0.0
+    brake = 0.0
+    steering = 0.0
+    
+    # Output value ranges from 0 to 10:
+    
+    if output_value <= 8:
+        # Steering, brake, and gas are zero
+        output_value -= 4
+        steering = float(output_value)/4
+    elif output_value >=9 and output_value <=9:
+        output_value -= 8
+        gas = float(output_value)/3  # 33% of gas
+    elif output_value >= 10 and output_value <= 10:
+        output_value -= 9
+        brake = float(output_value)/2  # 50% of brake
+    else:
+        print("Error")  #Why?
+    
+    return [steering, gas, brake]
 
 class Model:
     def __init__(self, env, actions, actions_dict, gamma):
@@ -67,33 +97,46 @@ class Model:
         self.actions_dict = actions_dict
         self.gamma = gamma
     
-    def predict(self, s, vector_size):
-        return self.model.predict(s.reshape(-1, vector_size), verbose=0)[0]
+    def predict(self, s):
+        return self.model.predict(s.reshape(-1, 10*10 + 7 + 4), verbose=0)[0]
 
     def update(self, s, Q):
         self.model.fit(s, Q, verbose = 0)
 
     def act(self, state, epsilon):
         if np.random.random() < epsilon:
-            return np.random.choice([0,1,2,3], 1, p = [0.3,0.3,0.1,0.3])[0]
-        return np.argmax(self.model.predict(state.reshape(-1, vector_size), verbose=0)[0])
+            return convert_argmax_qval_to_env_action(np.random.choice([i for i in range(11)], 1)[0])
+        return convert_argmax_qval_to_env_action(np.argmax(self.model.predict(state.reshape(-1, vector_size))[0]))
 
-    def copy(self):
-        return self.model
+    def __cmp__(self, other):
+        return cmp(self.name, other.name)
+
 
     def update_weights(self, rewards, models, share_a, share_b):
         indexes_top_3 = sorted(range(len(rewards)), key=lambda i: rewards[i])[-3:][::-1]
         target_weights = self.model.get_weights()
-        weights = [models[i].get_weights() for i in indexes_top_3]
+        weights = [models[i].model.get_weights() for i in indexes_top_3]
         for i in range(len(target_weights)):
                 target_weights[i] = share_a*weights[0][i] + share_b*weights[1][i] + (1-share_a-share_b)*weights[2][i]
         average_reward = share_a*rewards[indexes_top_3[0]] + share_b*rewards[indexes_top_3[1]] + (1-share_a-share_b)*rewards[indexes_top_3[2]]
         self.model.set_weights(target_weights)
         return average_reward
 
-    def update(self, s, G):
-        self.model.fit(s, np.array(G), nb_epoch=1, verbose=0)
-                   
+    # def update(self, s, G):
+        # self.model.fit(s, np.array(G), nb_epoch=1, verbose=0)
+
+    def initialize_random_weights(self):
+        weights = self.model.get_weights()
+        weights_new = [np.random.permutation(w.flat).reshape(w.shape) for w in weights]
+        self.model.set_weights(weights_new)
+
+def initialize_random_weights(model):
+        weights = model.get_weights()
+        for i in range(len(weights)):
+            weights_new = [np.random.permutation(w.flat).reshape(w.shape) for w in weights]
+        model.set_weights(weights_new)
+        return model
+
 def transform(s):
     # We will crop the digits in the lower right corner, as they yield little 
     # information to our agent, as well as grayscale the frames.
@@ -158,26 +201,26 @@ actions_dict = {'left':[-0.8,0,0], 'right':[0.8,0,0], 'brake':[0,0,0.8], 'acc':[
 actions = ['left', 'right', 'brake', 'acc']
 
 
-
-def play(agent, actions, actions_dict, epsilon, species, share_a, share_b):
+def play(model, model2,  actions, actions_dict, epsilon, species, share_a, share_b):
     models = []
     rewards = []
     print(epsilon)
     iter = 1
     for i in range(species):
         observation = env.reset()
-        if i>=4:
-            new_model = Model(env, actions, actions_dict, 0.8)
-            model_gen = new_model.model
+        if i==0:
+            model_gen = model2
+            model_gen.initialize_random_weights()
             models.append(model_gen)
-        else:
+
+        else:       
+            model_gen = copy.copy(model)            
+            models.append(model_gen)
         
-            model_gen = model.copy()
-            models.append(model_gen)
         totalreward = 0
         iter = 1
         done = False
-        
+        # model_gen.summary()
         while not done:
             env.render()
             a, b, c = transform(observation)
@@ -185,41 +228,43 @@ def play(agent, actions, actions_dict, epsilon, species, share_a, share_b):
            
             state = np.concatenate((np.array([compute_steering_speed_gyro_abs(a)]).reshape(1,-1).flatten(),
                                b.reshape(1, -1).flatten(),c), axis=0)
-            action = agent.act(state, epsilon)
-            observation, reward, done, info = env.step(actions_dict[actions[action]])
+            action = model_gen.act(state, epsilon)
+            observation, reward, done, info = env.step(action)
             a,b,c = transform(observation)
             new_state = np.concatenate((np.array([compute_steering_speed_gyro_abs(a)]).reshape(1,-1).flatten(),
                                b.reshape(1, -1).flatten(),c), axis=0)
-            qval = model_gen.predict(new_state.reshape(-1, vector_size), 10*10 + 7 + 4)[0]
+            qval = model_gen.model.predict(new_state.reshape(-1, vector_size))[0]
+            # print(qval)
             G = reward + 0.99*np.max(qval)
             y = qval[:]
 #            print('it is:', np.amax(qval))
             y[np.argmax(qval)] = G
-            model_gen.fit(state.reshape(-1, vector_size), y.reshape(1,-1), epochs = 1, verbose = 0)
+            model_gen.model.fit(state.reshape(-1, vector_size), y.reshape(1,-1), epochs = 1, verbose = 0)
             totalreward+=reward
             state = new_state
         rewards.append(totalreward)
 
     iter += 1
-    weighted_average = agent.update_weights(rewards, models, share_a, share_b)
+    weighted_average = model.update_weights(rewards, models, share_a, share_b)
     return weighted_average, iter
 
     
 
 
-N=200
+N=50
 totalrewards = np.empty(N)
 costs = np.empty(N)
 gamma = 0.8
 model = Model(env, actions, actions_dict, gamma)
+model2 = Model(env, actions, actions_dict, gamma)
 actions = ['left', 'right', 'brake', 'acc']
 species = 7
 share_a = 0.6
 share_b = 0.2
 env = wrappers.Monitor(env, os.path.join(os.getcwd(), "videos"), force=True)
 for n in range(1,N):
-    eps = 1 / np.sqrt(n+5)
-    totalreward, iters = play(model, actions, actions_dict, eps, species, share_a, share_b)
+    eps = 1 / np.sqrt(n+4)
+    totalreward, iters = play(model, model2, actions, actions_dict, eps, species, share_a, share_b)
 
     totalrewards[n] = totalreward
     print("Episode: ", n,
@@ -232,7 +277,8 @@ for n in range(1,N):
     if n%10 == 0:
         model.model.save('race-car_larger.h5')
 
-
+plt.plot(totalrewards)
+plt.show()
 
 
 env.close()
