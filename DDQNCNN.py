@@ -26,7 +26,6 @@ register(
     reward_threshold=900,
 )
 
-# import tensorflow.contrib.slim as slim
 
 import os
 
